@@ -262,13 +262,17 @@ void cryptolight_gpu_phase2(const int threads, const uint16_t bfactor, const uin
 			cn_aes_single_round(sharedMemory, &long_state[j], c, a);
 			XOR_BLOCKS_DST(c, b, &ls_tmp);
 			store_variant1(&long_state[j], ls_tmp);
-			MUL_SUM_XOR_DST_1(c, a, &long_state[(c[0] >> 2) & E2I_MASK2], tweak);
+			ls_tmp = AS_UINT4(&long_state[(c[0] >> 2) & E2I_MASK2]);
+			MUL_SUM_XOR_DST_1(c, a, &ls_tmp, tweak);
+			AS_UINT4(&long_state[(c[0] >> 2) & E2I_MASK2]) = ls_tmp;
 
 			j = (A.x >> 2) & E2I_MASK2;
 			cn_aes_single_round(sharedMemory, &long_state[j], b, a);
 			XOR_BLOCKS_DST(b, c, &ls_tmp);
 			store_variant1(&long_state[j], ls_tmp);
-			MUL_SUM_XOR_DST_1(b, a, &long_state[(b[0] >> 2) & E2I_MASK2], tweak);
+			ls_tmp = AS_UINT4(&long_state[(b[0] >> 2) & E2I_MASK2]);
+			MUL_SUM_XOR_DST_1(b, a, &ls_tmp, tweak);
+			AS_UINT4(&long_state[(b[0] >> 2) & E2I_MASK2]) = ls_tmp;
 		}
 		if (bfactor) {
 			void * ctx_a = (void*)(&d_ctx_a[thread << 2]);
