@@ -152,6 +152,7 @@ __device__ __forceinline__ void MUL_SUM_XOR_DST_1(const uint64_t m, uint4 &a, vo
 	AS_UL2(far_dst) = p;
 }
 
+template<bool REV>
 __device__ __forceinline__ void AES_SHUFFLE_ADD(const uint4 a, const uint4 b, const ulonglong2 b1,
 	uint4 __restrict__ &c, const uint32_t * __restrict__ sm1, ulonglong2 * __restrict__ chunk)
 {
@@ -159,14 +160,22 @@ __device__ __forceinline__ void AES_SHUFFLE_ADD(const uint4 a, const uint4 b, co
 
 	cn_aes_single_round_c(sm1, a, &c, in);
 
-	const ulonglong2 chunk1_old = chunk[1];
+	const ulonglong2 chunk_old = REV ? chunk[3] : chunk[1];
 
-	chunk[1].x = chunk[3].x + (AS_UL2(&b1)).x;
-	chunk[1].y = chunk[3].y + (AS_UL2(&b1)).y;
-	chunk[3].x = chunk[2].x + (AS_UL2(&a)).x;
-	chunk[3].y = chunk[2].y + (AS_UL2(&a)).y;
-	chunk[2].x = chunk1_old.x + (AS_UL2(&b)).x;
-	chunk[2].y = chunk1_old.y + (AS_UL2(&b)).y;
+	if (REV) { /* graft cn8 reverse waltz */
+		chunk[1] += AS_UL2(&b1);
+		chunk[3].x = chunk[2].x + (AS_UL2(&a)).x;
+		chunk[3].y = chunk[2].y + (AS_UL2(&a)).y;
+		chunk[2].x = chunk_old.x + (AS_UL2(&b)).x;
+		chunk[2].y = chunk_old.y + (AS_UL2(&b)).y;
+	} else { /* monero cn8 */
+		chunk[1].x = chunk[3].x + (AS_UL2(&b1)).x;
+		chunk[1].y = chunk[3].y + (AS_UL2(&b1)).y;
+		chunk[3].x = chunk[2].x + (AS_UL2(&a)).x;
+		chunk[3].y = chunk[2].y + (AS_UL2(&a)).y;
+		chunk[2].x = chunk_old.x + (AS_UL2(&b)).x;
+		chunk[2].y = chunk_old.y + (AS_UL2(&b)).y;
+	}
 
 	chunk[0] = AS_UL2(&c) ^ AS_UL2(&b);
 }
@@ -228,6 +237,7 @@ __device__ __forceinline__ uint32_t fast_sqrt_v2(const uint64_t n1)
 	return result;
 }
 
+template<bool REV>
 __device__ __forceinline__ void DIVSQ_MUL_SHF_SUM_XOR_DST(const ulonglong2 c,
 	ulonglong2 __restrict__ &ds, const ulonglong2 b1, uint64_t __restrict__ &bs,
 	uint4 __restrict__ &a, const uint4 bb, ulonglong2 * __restrict__ chunk)
@@ -244,20 +254,34 @@ __device__ __forceinline__ void DIVSQ_MUL_SHF_SUM_XOR_DST(const ulonglong2 c,
 	const uint64_t sqrt_input = c.x + ds.x;
 	ds.y = fast_sqrt_v2(sqrt_input);
 
-	const ulonglong2 chunk1_old = chunk[1] ^ p;
+	ulonglong2 chunk_old;
+
+	if (REV) {
+		chunk_old = chunk[3];
+		chunk[1] = chunk[1] ^ p;
+	} else {
+		chunk_old = chunk[1] ^ p;
+	}
+
 	const ulonglong2 chunk0_old = chunk[0];
 	p = p ^ chunk[2];
 	p += AS_UL2(&a);
 	chunk[0] = p;
 
-	chunk[1].x = chunk[3].x + b1.x;
-	chunk[1].y = chunk[3].y + b1.y;
-
-	chunk[3].x = chunk[2].x + (AS_UL2(&a)).x;
-	chunk[3].y = chunk[2].y + (AS_UL2(&a)).y;
-
-	chunk[2].x = chunk1_old.x + (AS_UL2(&bb)).x;
-	chunk[2].y = chunk1_old.y + (AS_UL2(&bb)).y;
+	if (REV) { /* graft cn8 reverse waltz */
+		chunk[1] += b1;
+		chunk[3].x = chunk[2].x + (AS_UL2(&a)).x;
+		chunk[3].y = chunk[2].y + (AS_UL2(&a)).y;
+		chunk[2].x = chunk_old.x + (AS_UL2(&bb)).x;
+		chunk[2].y = chunk_old.y + (AS_UL2(&bb)).y;
+	} else { /* monero cn8 */
+		chunk[1].x = chunk[3].x + b1.x;
+		chunk[1].y = chunk[3].y + b1.y;
+		chunk[3].x = chunk[2].x + (AS_UL2(&a)).x;
+		chunk[3].y = chunk[2].y + (AS_UL2(&a)).y;
+		chunk[2].x = chunk_old.x + (AS_UL2(&bb)).x;
+		chunk[2].y = chunk_old.y + (AS_UL2(&bb)).y;
+	}
 
 	bs = chunk0_old.x;
 
@@ -265,11 +289,12 @@ __device__ __forceinline__ void DIVSQ_MUL_SHF_SUM_XOR_DST(const ulonglong2 c,
 	(AS_UL2(&a)).y = chunk0_old.y ^ p.y;
 }
 
+template<uint32_t CN_ITER>
 #if __CUDA_ARCH__ >= 500
 __launch_bounds__(64) /* avoid register spill, launch limited to -l ..x64 */
 #endif
 __global__
-void monero_gpu_phase2(const uint32_t threads, const uint16_t bfactor, const uint32_t partidx,
+void cn8_gpu_phase2(const uint32_t threads, const uint16_t bfactor, const uint32_t partidx,
 	ulonglong2 * __restrict__ d_long_state, uint32_t * __restrict__ d_ctx_a, uint32_t * __restrict__ d_ctx_b,
 	uint64_t * __restrict__ d_tweak)
 {
@@ -286,10 +311,11 @@ void monero_gpu_phase2(const uint32_t threads, const uint16_t bfactor, const uin
 
 	for (int thread = blockIdx.x * blockDim.x + threadIdx.x; thread < threads; thread += blockDim.x * gridDim.x)
 	{
-		const uint32_t batchsize = ITER >> (2 + bfactor);
+		const uint32_t batchsize = CN_ITER >> (2 + bfactor);
 		const uint32_t start = partidx * batchsize;
 		const uint32_t end = start + batchsize;
 		const int sub = threadIdx.x & 3;
+		const bool REV = CN_ITER == 0xC0000 ? true : false;
 
 		ulonglong2 div_sq = __ldg((ulonglong2 *)&d_tweak[thread << 2]);
 		ulonglong2 B1 = __ldg((ulonglong2 *)&d_tweak[(thread << 2) + 2]);
@@ -297,7 +323,7 @@ void monero_gpu_phase2(const uint32_t threads, const uint16_t bfactor, const uin
 		uint4 A = __ldg((uint4 *)&d_ctx_a[thread << 2]);
 		uint4 B = __ldg((uint4 *)&d_ctx_b[thread << 2]);
 
-		for (int i = start; i < end; i++) // end = 262144
+		for (int i = start; i < end; i++) // end = 262144 (monero), 196608 (graft cn8 reverse waltz)
 		{
 			uint4 C;
 			uint64_t bs;
@@ -315,7 +341,7 @@ void monero_gpu_phase2(const uint32_t threads, const uint16_t bfactor, const uin
 			}
 			__syncthreads();
 
-			AES_SHUFFLE_ADD(A, B, B1, C, sm1, chunk);
+			AES_SHUFFLE_ADD<REV>(A, B, B1, C, sm1, chunk);
 
 			#pragma unroll
 			for (int k = 0; k < 4; k++) //Copy to global mem using 4 threads
@@ -341,7 +367,7 @@ void monero_gpu_phase2(const uint32_t threads, const uint16_t bfactor, const uin
 			}
 			__syncthreads();
 
-			DIVSQ_MUL_SHF_SUM_XOR_DST(AS_UL2(&C), div_sq, B1, bs, A, B, chunk);
+			DIVSQ_MUL_SHF_SUM_XOR_DST<REV>(AS_UL2(&C), div_sq, B1, bs, A, B, chunk);
 
 			#pragma unroll
 			for (int k = 0; k < 4; k++)
@@ -369,7 +395,7 @@ void monero_gpu_phase2(const uint32_t threads, const uint16_t bfactor, const uin
 			}
 			__syncthreads();
 
-			AES_SHUFFLE_ADD(A, C, B1, B, sm1, chunk);
+			AES_SHUFFLE_ADD<REV>(A, C, B1, B, sm1, chunk);
 
 			#pragma unroll
 			for (int k = 0; k < 4; k++)
@@ -395,7 +421,7 @@ void monero_gpu_phase2(const uint32_t threads, const uint16_t bfactor, const uin
 			}
 			__syncthreads();
 
-			DIVSQ_MUL_SHF_SUM_XOR_DST(AS_UL2(&B), div_sq, B1, bs, A, C, chunk);
+			DIVSQ_MUL_SHF_SUM_XOR_DST<REV>(AS_UL2(&B), div_sq, B1, bs, A, C, chunk);
 
 			#pragma unroll
 			for (int k = 0; k < 4; k++)
@@ -526,14 +552,17 @@ void cryptonight_core_cuda(int thr_id, uint32_t blocks, uint32_t threads, ulongl
 	for (uint32_t i = 0; i < partcount; i++)
 	{
 		dim3 b = device_sm[dev_id] >= 300 ? block4 : block;
-		dim3 b1 = block; /* monero */
+		dim3 b1 = block; /* cn8 */
 		b1.x -= b1.x & 3; /* round down to nearest multiple of 4 for correct __shfl operation */
 		const uint32_t sm_sz = sizeof(ulonglong2) * b1.x * 4; /* shared mem for global mem copy */
 
 		if (variant == 0)
 			cryptonight_gpu_phase2 <<<grid, b>>> (throughput, bfactor, i, (uint64_t*) d_long_state, d_ctx_a, d_ctx_b);
-		else if (variant == 1 || cryptonight_fork == 7 || cryptonight_fork == 8) {
-			monero_gpu_phase2 <<<grid, b1, sm_sz>>> (throughput, bfactor, i, d_long_state, d_ctx_a, d_ctx_b, d_ctx_tweak);
+		else if (variant == 1 || cryptonight_fork == 7 || cryptonight_fork == 8) { /* monero cn8 == 7, graft cn8 reverse waltz == 8 */
+			if (cryptonight_fork == 8)
+				cn8_gpu_phase2 <0xC0000> <<<grid, b1, sm_sz>>> (throughput, bfactor, i, d_long_state, d_ctx_a, d_ctx_b, d_ctx_tweak);
+			else
+				cn8_gpu_phase2 <ITER> <<<grid, b1, sm_sz>>> (throughput, bfactor, i, d_long_state, d_ctx_a, d_ctx_b, d_ctx_tweak);
 		}
 		else if (variant == 2 && cryptonight_fork == 3)
 			stellite_gpu_phase2 <<<grid, b>>> (throughput, bfactor, i, (uint64_t*) d_long_state, d_ctx_a, d_ctx_b, d_ctx_tweak);

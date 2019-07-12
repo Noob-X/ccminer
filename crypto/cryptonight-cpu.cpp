@@ -141,8 +141,8 @@ static void mul_sum_xor_dst(const uint8_t* a, uint8_t* c, uint8_t* dst, const in
 	((uint64_t*) dst)[1] = variant ? lo ^ tweak : lo;
 }
 
-static inline void mul_sum_xor_dst1(const uint8_t *cb, uint8_t *a, uint8_t *dst, uint8_t *ptr,
-				   const uint64_t offset, const __m128i *b1, const uint64_t *bs, const uint8_t *bb)
+static inline void mul_sum_xor_dst1(const uint8_t *cb, uint8_t *a, uint8_t *ptr, const uint64_t offset,
+				    const __m128i *b1, const uint64_t *bs, const uint8_t *bb)
 {
 	uint64_t hi __attribute__ ((aligned(16)));
 	uint64_t lo __attribute__ ((aligned(16)));
@@ -160,18 +160,25 @@ static inline void mul_sum_xor_dst1(const uint8_t *cb, uint8_t *a, uint8_t *dst,
 	const __m128i _b = _mm_loadu_si128((__m128i *)bb);
 	const __m128i _a = _mm_loadu_si128((__m128i *)a);
 
-	_mm_storeu_si128((__m128i *)((ptr) + ((offset) ^ 0x10)), _mm_add_epi64(chunk3, *b1));
-	_mm_storeu_si128((__m128i *)((ptr) + ((offset) ^ 0x20)), _mm_add_epi64(chunk1, _b));
+	if (cryptonight_fork == 8) {
+		/* graft cn8 reverse waltz */
+		_mm_storeu_si128((__m128i *)((ptr) + ((offset) ^ 0x10)), _mm_add_epi64(chunk1, *b1));
+		_mm_storeu_si128((__m128i *)((ptr) + ((offset) ^ 0x20)), _mm_add_epi64(chunk3, _b));
+	} else {
+		/* monero cn8 */
+		_mm_storeu_si128((__m128i *)((ptr) + ((offset) ^ 0x10)), _mm_add_epi64(chunk3, *b1));
+		_mm_storeu_si128((__m128i *)((ptr) + ((offset) ^ 0x20)), _mm_add_epi64(chunk1, _b));
+	}
 	_mm_storeu_si128((__m128i *)((ptr) + ((offset) ^ 0x30)), _mm_add_epi64(chunk2, _a));
 
 	hi += ((uint64_t*)a)[0];
 	lo += ((uint64_t*)a)[1];
 
-    ((uint64_t*)a)[0] = *bs ^ hi;
-    ((uint64_t*)a)[1] = ((uint64_t*) dst)[1] ^ lo;
+	((uint64_t*)a)[0] = *bs ^ hi;
+	((uint64_t*)a)[1] = ((uint64_t *)(ptr + offset))[1] ^ lo;
 
-    ((uint64_t *)dst)[0] = hi;
-    ((uint64_t *)dst)[1] = lo;
+	((uint64_t *)(ptr + offset))[0] = hi;
+	((uint64_t *)(ptr + offset))[1] = lo;
 }
 
 static void copy_block(uint8_t* dst, const uint8_t* src) {
@@ -212,8 +219,15 @@ static inline void shuffle_add(const uint8_t *ptr, const uint64_t offset, const 
 	const __m128i chunk2 = _mm_loadu_si128((__m128i *)((ptr) + ((offset) ^ 0x20)));
 	const __m128i chunk3 = _mm_loadu_si128((__m128i *)((ptr) + ((offset) ^ 0x30)));
 
-	_mm_storeu_si128((__m128i *)((ptr) + ((offset) ^ 0x10)), _mm_add_epi64(chunk3, *b1));
-	_mm_storeu_si128((__m128i *)((ptr) + ((offset) ^ 0x20)), _mm_add_epi64(chunk1, _b));
+	if (cryptonight_fork == 8) {
+		/* graft cn8 reverse waltz */
+		_mm_storeu_si128((__m128i *)((ptr) + ((offset) ^ 0x10)), _mm_add_epi64(chunk1, *b1));
+		_mm_storeu_si128((__m128i *)((ptr) + ((offset) ^ 0x20)), _mm_add_epi64(chunk3, _b));
+	} else {
+		/* monero cn8 */
+		_mm_storeu_si128((__m128i *)((ptr) + ((offset) ^ 0x10)), _mm_add_epi64(chunk3, *b1));
+		_mm_storeu_si128((__m128i *)((ptr) + ((offset) ^ 0x20)), _mm_add_epi64(chunk1, _b));
+	}
 	_mm_storeu_si128((__m128i *)((ptr) + ((offset) ^ 0x30)), _mm_add_epi64(chunk2, _a));
 }
 
@@ -273,8 +287,9 @@ static void cryptonight_hash_ctx(void* output, const void* input, const size_t l
 		uint64_t division_result = ctx->state.hs.w[12];
 		uint64_t sqrt_result = ctx->state.hs.w[13];
 		__m128i dv = _mm_set_epi64x(ctx->state.hs.w[9] ^ ctx->state.hs.w[11], ctx->state.hs.w[8] ^ ctx->state.hs.w[10]);
+		size_t iter = cryptonight_fork == 8 ? (3 * ITER) / 4 : ITER;
 
-		for (i = 0; likely(i < ITER / 4); ++i) {
+		for (i = 0; likely(i < iter / 4); ++i) {
 			uint64_t k, l, bs;
 			l = ((uint64_t *)(ctx->a))[0] & 0x1FFFF0;
 			aesb_single_round(&ctx->long_state[l], ctx->c, ctx->a);
@@ -282,7 +297,7 @@ static void cryptonight_hash_ctx(void* output, const void* input, const size_t l
 			shuffle_add(ctx->long_state, l, ctx->a, ctx->b, &dv);
 			xor_blocks_dst(ctx->c, ctx->b, &ctx->long_state[l]);
 			div_sq(&ctx->long_state[k], ctx->c, &division_result, &sqrt_result, &bs);
-			mul_sum_xor_dst1(ctx->c, ctx->a, &ctx->long_state[k], ctx->long_state, k, &dv, &bs, ctx->b);
+			mul_sum_xor_dst1(ctx->c, ctx->a, ctx->long_state, k, &dv, &bs, ctx->b);
 			dv = _mm_loadu_si128((__m128i *)&ctx->b);
 
 			l = ((uint64_t *)(ctx->a))[0] & 0x1FFFF0;
@@ -291,7 +306,7 @@ static void cryptonight_hash_ctx(void* output, const void* input, const size_t l
 			shuffle_add(ctx->long_state, l, ctx->a, ctx->c, &dv);
 			xor_blocks_dst(ctx->b, ctx->c, &ctx->long_state[l]);
 			div_sq(&ctx->long_state[k], ctx->b, &division_result, &sqrt_result, &bs);
-			mul_sum_xor_dst1(ctx->b, ctx->a, &ctx->long_state[k], ctx->long_state, k, &dv, &bs, ctx->c);
+			mul_sum_xor_dst1(ctx->b, ctx->a, ctx->long_state, k, &dv, &bs, ctx->c);
 			dv = _mm_loadu_si128((__m128i *)&ctx->c);
 		}
 	} else {
