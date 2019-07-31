@@ -78,6 +78,7 @@ void algo_free_all(int thr_id)
 	free_luffa(thr_id);
 	free_lyra2(thr_id);
 	free_lyra2v2(thr_id);
+	free_lyra2v3(thr_id);
 	free_lyra2Z(thr_id);
 	free_myriad(thr_id);
 	free_neoscrypt(thr_id);
@@ -93,6 +94,7 @@ void algo_free_all(int thr_id)
 	free_skunk(thr_id);
 	free_sha256d(thr_id);
 	free_sha256t(thr_id);
+	free_sha256q(thr_id);
 	free_sia(thr_id);
 	free_sib(thr_id);
 	free_sonoa(thr_id);

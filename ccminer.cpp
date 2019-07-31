@@ -269,7 +269,8 @@ Options:\n\
 			lbry        LBRY Credits (Sha/Ripemd)\n\
 			luffa       Joincoin\n\
 			lyra2       CryptoCoin\n\
-			lyra2v2     VertCoin\n\
+			lyra2v2     MonaCoin\n\
+			lyra2v3     Vertcoin\n\
 			lyra2z      ZeroCoin (3rd impl)\n\
 			myr-gr      Myriad-Groestl\n\
 			monero      XMR cryptonight (v7)\n\
@@ -283,6 +284,7 @@ Options:\n\
 			qubit       Qubit\n\
 			sha256d     SHA256d (bitcoin)\n\
 			sha256t     SHA256 x3\n\
+			sha256q     SHA256 x4\n\
 			sia         SIA (Blake2B)\n\
 			sib         Sibcoin (X11+Streebog)\n\
 			scrypt      Scrypt\n\
@@ -977,6 +979,7 @@ static bool submit_upstream_work(CURL *curl, struct work *work)
 		case ALGO_BMW:
 		case ALGO_SHA256D:
 		case ALGO_SHA256T:
+		case ALGO_SHA256Q:
 		case ALGO_VANILLA:
 			// fast algos require that... (todo: regen hash)
 			check_dups = true;
@@ -1740,6 +1743,7 @@ static bool stratum_gen_work(struct stratum_ctx *sctx, struct work *work)
 		case ALGO_KECCAKC:
 		case ALGO_LBRY:
 		case ALGO_LYRA2v2:
+		case ALGO_LYRA2v3:
 		case ALGO_LYRA2Z:
 		case ALGO_PHI2:
 		case ALGO_TIMETRAVEL:
@@ -2258,6 +2262,7 @@ static void *miner_thread(void *userdata)
 			case ALGO_DECRED:
 			case ALGO_SHA256D:
 			case ALGO_SHA256T:
+			case ALGO_SHA256Q:
 			//case ALGO_WHIRLPOOLX:
 				minmax = 0x40000000U;
 				break;
@@ -2280,6 +2285,7 @@ static void *miner_thread(void *userdata)
 			case ALGO_JHA:
 			case ALGO_HSR:
 			case ALGO_LYRA2v2:
+			case ALGO_LYRA2v3:
 			case ALGO_PHI:
 			case ALGO_PHI2:
 			case ALGO_POLYTIMOS:
@@ -2471,6 +2477,9 @@ static void *miner_thread(void *userdata)
 		case ALGO_LYRA2v2:
 			rc = scanhash_lyra2v2(thr_id, &work, max_nonce, &hashes_done);
 			break;
+		case ALGO_LYRA2v3:
+			rc = scanhash_lyra2v3(thr_id, &work, max_nonce, &hashes_done);
+			break;
 		case ALGO_LYRA2Z:
 			rc = scanhash_lyra2Z(thr_id, &work, max_nonce, &hashes_done);
 			break;
@@ -2514,6 +2523,9 @@ static void *miner_thread(void *userdata)
 			break;
 		case ALGO_SHA256T:
 			rc = scanhash_sha256t(thr_id, &work, max_nonce, &hashes_done);
+			break;
+		case ALGO_SHA256Q:
+			rc = scanhash_sha256q(thr_id, &work, max_nonce, &hashes_done);
 			break;
 		case ALGO_SIA:
 			rc = scanhash_sia(thr_id, &work, max_nonce, &hashes_done);

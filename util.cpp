@@ -2246,6 +2246,9 @@ void print_hash_tests(void)
 	lyra2v2_hash(&hash[0], &buf[0]);
 	printpfx("lyra2v2", hash);
 
+	lyra2v3_hash(&hash[0], &buf[0]);
+	printpfx("lyra2v3", hash);
+
 	lyra2Z_hash(&hash[0], &buf[0]);
 	printpfx("lyra2z", hash);
 
@@ -2288,6 +2291,9 @@ void print_hash_tests(void)
 	sha256t_hash(&hash[0], &buf[0]);
 	printpfx("sha256t", hash);
 
+	sha256q_hash(&hash[0], &buf[0]);
+	printpfx("sha256q", hash);
+  
 	sia_blake2b_hash(&hash[0], &buf[0]);
 	printpfx("sia", hash);
 
